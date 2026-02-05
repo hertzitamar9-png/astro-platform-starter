@@ -1,19 +1,332 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Markdown from '../components/Markdown.astro';
-
-const explainer = `
-An Astro website can go way beyond static pages - on the right platform.
-
-Netlify supports not only [Streaming SSR](https://docs.astro.build/en/guides/server-side-rendering/#html-streaming) and fast [Edge Middleware](https://docs.astro.build/en/guides/middleware/), but also [on-demand revalidation](https://www.netlify.com/blog/cache-tags-and-purge-api-on-netlify/) and [stale-while-revalidate](https://www.netlify.com/blog/swr-and-fine-grained-cache-control/). 
-Any page or data can be rebuilt only when needed, without site visitors ever getting a performance hit.
-`;
 ---
 
-<Layout title="Welcome to Astro.">
-    <h1 class="mb-10">Netlify Platform Starter for Astro</h1>
-    <Markdown content={explainer} class="mb-10 text-lg" />
-    <p>
-        <a href="https://docs.netlify.com/frameworks/astro/" class="btn btn-lg sm:min-w-64">Read the Docs</a>
-    </p>
+<Layout title="Starfall Survivor">
+    <section class="py-6">
+        <h1 class="mb-3">⭐ Starfall Survivor</h1>
+        <p class="max-w-2xl mb-6 text-lg text-white/85">
+            Dodge meteors, collect stardust, and survive as long as you can. Use <strong>WASD</strong> or
+            <strong>arrow keys</strong>. Press <strong>Space</strong> to dash through danger.
+        </p>
+
+        <div class="grid gap-6 lg:grid-cols-[1fr_19rem]">
+            <div class="relative overflow-hidden border rounded-xl border-white/20 bg-black/35 shadow-[0_0_50px_rgba(246,114,128,0.18)]">
+                <canvas id="game" width="960" height="540" class="block w-full h-auto"></canvas>
+                <div id="overlay" class="absolute inset-0 flex items-center justify-center p-6 text-center bg-black/40">
+                    <div class="space-y-4">
+                        <h2 id="overlay-title">Ready?</h2>
+                        <p id="overlay-text" class="text-white/85">Survive the meteor storm and grab as much stardust as you can.</p>
+                        <button id="start-btn" class="btn btn-lg">Start Game</button>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="p-5 space-y-4 border rounded-xl border-white/20 bg-black/25">
+                <h2 class="text-xl">Live Stats</h2>
+                <dl class="space-y-2 text-white/90">
+                    <div class="flex items-center justify-between gap-3">
+                        <dt>Score</dt>
+                        <dd id="score" class="font-bold">0</dd>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <dt>High Score</dt>
+                        <dd id="best-score" class="font-bold">0</dd>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <dt>Health</dt>
+                        <dd id="health" class="font-bold">100</dd>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <dt>Dash Cooldown</dt>
+                        <dd id="dash" class="font-bold">Ready</dd>
+                    </div>
+                </dl>
+                <p class="text-sm text-white/75">
+                    Tip: Stardust gives score and tiny heals. Meteors hit harder the longer you survive.
+                </p>
+            </aside>
+        </div>
+    </section>
 </Layout>
+
+<script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const bestEl = document.getElementById('best-score');
+    const healthEl = document.getElementById('health');
+    const dashEl = document.getElementById('dash');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlay-title');
+    const overlayText = document.getElementById('overlay-text');
+    const startBtn = document.getElementById('start-btn');
+
+    const keys = new Set();
+    const stars = Array.from({ length: 100 }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 2 + 0.5,
+        speed: Math.random() * 0.6 + 0.2,
+    }));
+
+    const state = {
+        running: false,
+        score: 0,
+        health: 100,
+        difficulty: 1,
+        player: {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 14,
+            speed: 280,
+            dashAt: -Infinity,
+            dashCooldown: 2.4,
+            dashDuration: 0.18,
+        },
+        meteors: [],
+        dust: [],
+        meteorSpawnTimer: 0,
+        dustSpawnTimer: 0,
+        elapsed: 0,
+    };
+
+    let bestScore = Number(localStorage.getItem('starfall-best') || 0);
+    bestEl.textContent = String(bestScore);
+
+    function startGame() {
+        state.running = true;
+        state.score = 0;
+        state.health = 100;
+        state.elapsed = 0;
+        state.difficulty = 1;
+        state.meteors = [];
+        state.dust = [];
+        state.meteorSpawnTimer = 0;
+        state.dustSpawnTimer = 0;
+        state.player.x = canvas.width / 2;
+        state.player.y = canvas.height / 2;
+        state.player.dashAt = -Infinity;
+        overlay.classList.add('hidden');
+    }
+
+    function spawnMeteor() {
+        const edge = Math.floor(Math.random() * 4);
+        const margin = 40;
+        let x = 0;
+        let y = 0;
+
+        if (edge === 0) {
+            x = Math.random() * canvas.width;
+            y = -margin;
+        } else if (edge === 1) {
+            x = canvas.width + margin;
+            y = Math.random() * canvas.height;
+        } else if (edge === 2) {
+            x = Math.random() * canvas.width;
+            y = canvas.height + margin;
+        } else {
+            x = -margin;
+            y = Math.random() * canvas.height;
+        }
+
+        const radius = 14 + Math.random() * 20;
+        const speed = 90 + Math.random() * 70 + state.difficulty * 24;
+        const hp = radius * 0.8;
+        state.meteors.push({ x, y, radius, speed, hp, spin: Math.random() * Math.PI * 2 });
+    }
+
+    function spawnDust() {
+        state.dust.push({
+            x: 30 + Math.random() * (canvas.width - 60),
+            y: 30 + Math.random() * (canvas.height - 60),
+            radius: 6 + Math.random() * 4,
+            value: 10 + Math.floor(Math.random() * 15),
+        });
+    }
+
+    function update(dt, now) {
+        if (!state.running) {
+            return;
+        }
+
+        state.elapsed += dt;
+        state.difficulty = 1 + state.elapsed / 25;
+
+        const p = state.player;
+        const isDashing = now - p.dashAt < p.dashDuration;
+        const speedMult = isDashing ? 2.5 : 1;
+
+        let dx = 0;
+        let dy = 0;
+        if (keys.has('arrowup') || keys.has('w')) dy -= 1;
+        if (keys.has('arrowdown') || keys.has('s')) dy += 1;
+        if (keys.has('arrowleft') || keys.has('a')) dx -= 1;
+        if (keys.has('arrowright') || keys.has('d')) dx += 1;
+        const mag = Math.hypot(dx, dy) || 1;
+
+        p.x += (dx / mag) * p.speed * speedMult * dt;
+        p.y += (dy / mag) * p.speed * speedMult * dt;
+        p.x = Math.max(p.radius, Math.min(canvas.width - p.radius, p.x));
+        p.y = Math.max(p.radius, Math.min(canvas.height - p.radius, p.y));
+
+        state.meteorSpawnTimer -= dt;
+        if (state.meteorSpawnTimer <= 0) {
+            spawnMeteor();
+            state.meteorSpawnTimer = Math.max(0.16, 0.75 - state.difficulty * 0.05);
+        }
+
+        state.dustSpawnTimer -= dt;
+        if (state.dustSpawnTimer <= 0 && state.dust.length < 5) {
+            spawnDust();
+            state.dustSpawnTimer = 1.3;
+        }
+
+        for (const meteor of state.meteors) {
+            const vx = p.x - meteor.x;
+            const vy = p.y - meteor.y;
+            const dist = Math.hypot(vx, vy) || 1;
+            meteor.x += (vx / dist) * meteor.speed * dt;
+            meteor.y += (vy / dist) * meteor.speed * dt;
+            meteor.spin += dt * 3;
+
+            if (dist < meteor.radius + p.radius) {
+                if (!isDashing) {
+                    state.health -= Math.ceil(10 + meteor.radius * 0.25);
+                }
+                meteor.hp = 0;
+            }
+        }
+
+        state.meteors = state.meteors.filter((m) => m.hp > 0);
+
+        state.dust = state.dust.filter((dust) => {
+            const dist = Math.hypot(dust.x - p.x, dust.y - p.y);
+            if (dist < dust.radius + p.radius) {
+                state.score += dust.value;
+                state.health = Math.min(100, state.health + 2);
+                return false;
+            }
+            return true;
+        });
+
+        state.score += dt * 4 * state.difficulty;
+        state.health = Math.max(0, state.health - dt * (2 + state.difficulty * 0.25));
+
+        if (state.health <= 0) {
+            state.running = false;
+            const finalScore = Math.floor(state.score);
+            if (finalScore > bestScore) {
+                bestScore = finalScore;
+                localStorage.setItem('starfall-best', String(bestScore));
+            }
+            overlayTitle.textContent = 'Game Over';
+            overlayText.textContent = `Final score: ${finalScore}. Press start to try beating ${bestScore}.`;
+            startBtn.textContent = 'Play Again';
+            overlay.classList.remove('hidden');
+        }
+    }
+
+    function draw(now) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#040712';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (const star of stars) {
+            star.y += star.speed;
+            if (star.y > canvas.height + 4) {
+                star.y = -4;
+                star.x = Math.random() * canvas.width;
+            }
+            ctx.globalAlpha = 0.45 + star.size * 0.2;
+            ctx.fillStyle = '#d8e6ff';
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+        }
+        ctx.globalAlpha = 1;
+
+        for (const dust of state.dust) {
+            ctx.beginPath();
+            ctx.arc(dust.x, dust.y, dust.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#fde68a';
+            ctx.fill();
+            ctx.strokeStyle = '#f59e0b';
+            ctx.stroke();
+        }
+
+        for (const meteor of state.meteors) {
+            ctx.save();
+            ctx.translate(meteor.x, meteor.y);
+            ctx.rotate(meteor.spin);
+            ctx.beginPath();
+            for (let i = 0; i < 8; i += 1) {
+                const angle = (i / 8) * Math.PI * 2;
+                const jag = meteor.radius * (0.7 + ((i % 2) * 0.35));
+                const x = Math.cos(angle) * jag;
+                const y = Math.sin(angle) * jag;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = '#fb7185';
+            ctx.fill();
+            ctx.strokeStyle = '#be123c';
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        const p = state.player;
+        const isDashing = now - p.dashAt < p.dashDuration;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = isDashing ? '#34d399' : '#22d3ee';
+        ctx.fill();
+        ctx.strokeStyle = '#cffafe';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    function renderHud(now) {
+        scoreEl.textContent = String(Math.floor(state.score));
+        bestEl.textContent = String(bestScore);
+        healthEl.textContent = String(Math.ceil(state.health));
+        const cooldownLeft = Math.max(0, state.player.dashCooldown - (now - state.player.dashAt));
+        dashEl.textContent = cooldownLeft <= 0 ? 'Ready' : `${cooldownLeft.toFixed(1)}s`;
+    }
+
+    let last = performance.now() / 1000;
+    function loop() {
+        const now = performance.now() / 1000;
+        const dt = Math.min(0.05, now - last);
+        last = now;
+
+        update(dt, now);
+        draw(now);
+        renderHud(now);
+        requestAnimationFrame(loop);
+    }
+
+    window.addEventListener('keydown', (event) => {
+        keys.add(event.key.toLowerCase());
+        if (event.key === ' ') {
+            event.preventDefault();
+            const now = performance.now() / 1000;
+            if (now - state.player.dashAt >= state.player.dashCooldown && state.running) {
+                state.player.dashAt = now;
+            }
+        }
+    });
+
+    window.addEventListener('keyup', (event) => {
+        keys.delete(event.key.toLowerCase());
+    });
+
+    startBtn.addEventListener('click', () => {
+        startBtn.textContent = 'Restart';
+        startGame();
+    });
+
+    draw(0);
+    renderHud(0);
+    requestAnimationFrame(loop);
+</script>
